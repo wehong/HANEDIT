@@ -3,7 +3,7 @@
  *
  *  - 640x480x16 (VGA mode 12h), 80x30 글자 칸
  *  - 한글 입력: libhangul 오토마타 (두벌식 / 세벌식 최종)
- *  - 한/영 전환: Shift-Space 또는 오른쪽 Alt (한/영 키) — 입력 메뉴에서 고름
+ *  - 한/영 전환: Shift-Space, 오른쪽 Alt (한/영 키) 둘 다
  *  - 파일 형식: UTF-8 텍스트 (BOM 없음, 원래 줄바꿈 방식 유지)
  */
 #include <stdio.h>
@@ -18,7 +18,7 @@
 #include "kbd.h"
 #include "hangul.h"
 
-#define VERSION   "1.0"
+#define VERSION   "1.0.1"
 
 #define MENU_Y    1             /* 메뉴 줄: 제목 줄 아래 */
 #define TITLE_Y   0             /* 제목 줄: 맨 위 */
@@ -95,9 +95,7 @@ static void fatal(const char *s)
 /* ------------------------------------------------------------ 설정 */
 static int  text_wide = 1;      /* 본문 한글: 1 넓은 한글(두 칸, 기본), 0 좁은 한글(한 칸) */
 static int  textinv = 0;        /* 1: 본문의 글자색과 바탕색을 맞바꾼 상태 */
-static int  hankey = HK_SHIFTSPACE; /* 한/영 전환 글쇠 */
 
-static const char *hankey_name(void)  { return hankey == HK_RALT ? "오른쪽 Alt" : "Shift-Space"; }
 
 /* 본문 글자의 칸 수 (본문 한글 글꼴 기준) */
 static int tw(wch c) { return uwidth_m(c, text_wide); }
@@ -1260,7 +1258,8 @@ static int msgbox(const char *title, const char *l1, const char *l2, const char 
 static const char *help_text[] = {   /* "글쇠\t하는 일", "-" = 가로줄 */
     "글쇠\t하는 일",
     "-",
-    "@\t한글/영문 전환",          /* @ = 지금 고른 한/영 글쇠 */
+    "Shift-Space\t한글/영문 전환",
+    "오른쪽 Alt\t한글/영문 전환 (한/영 키도 됨)",
     "F9 / 한자 키\t한자로 바꾸기",
     "화살표 Home End\t커서 이동",
     "PgUp PgDn\t한 화면 위/아래",
@@ -1277,14 +1276,14 @@ static const char *help_text[] = {   /* "글쇠\t하는 일", "-" = 가로줄 */
     "Alt-O / Alt-N\t불러오기 / 새 문서",
     "F2 / Ctrl-L\t찾기 / 다시 찾기",
     "Alt-G\t줄 찾아가기",
-    "F10 / Alt\t메뉴 (Alt+괄호 속 글자: 그 메뉴)",
+    "F10 / 왼쪽 Alt\t메뉴 (Alt+괄호 속 글자: 그 메뉴)",
     "Alt-X\t끝내기",
     0
 };
 
 static void help_overlay(void)
 {
-    int i, x = 11, y = 1, w = 58, h = 26;
+    int i, x = 11, y = 1, w = 58, h = 27;
     dlg_frame(x, y, w, h, "도움말");
     for (i = 0; help_text[i]; i++) {
         const char *t = strchr(help_text[i], '\t');
@@ -1298,7 +1297,6 @@ static void help_overlay(void)
             char key[48];
             int n = (int)(t - help_text[i]);
             memcpy(key, help_text[i], n); key[n] = 0;
-            if (!strcmp(key, "@")) strcpy(key, hankey_name());
             scr_puts(x + 4, y + 2 + i, key, fg, C_LGRAY);
             scr_puts(x + 24, y + 2 + i, t + 1, fg, C_LGRAY);
         }
@@ -1436,7 +1434,7 @@ enum { CMD_NONE, CMD_NEW, CMD_OPEN, CMD_SAVE, CMD_SAVEAS, CMD_QUIT,
        CMD_FIND, CMD_FINDNEXT, CMD_GOTO,
        CMD_KBD2, CMD_KBD3, CMD_HELP, CMD_ABOUT,
        CMD_CUT, CMD_COPY, CMD_PASTE, CMD_UNDO, CMD_REDO, CMD_COLORS,
-       CMD_FONT_NARROW, CMD_FONT_WIDE, CMD_HK_SHIFTSPACE, CMD_HK_RALT, CMD_HANJA,
+       CMD_FONT_NARROW, CMD_FONT_WIDE, CMD_HANJA,
        CMD_BLOCK, CMD_SELALL, CMD_WRAP };
 
 
@@ -1531,7 +1529,7 @@ static void do_find(void)
     f.len = f.cur = findlen;
     {
         static char prompt[64];
-        sprintf(prompt, "찾을 낱말 (%s: 한/영):", hankey_name());
+        strcpy(prompt, "찾을 낱말 (Shift-Space, 오른쪽 Alt: 한/영):");
         if (!input_dialog("찾기", prompt, &f)) return;
     }
     if (!f.len) return;
@@ -1604,7 +1602,8 @@ static void do_block(void)
 /* HANEDIT.CFG (EXE와 같은 디렉터리). 줄마다 "이름=값", ';' 뒤는 주석.
      font   = wide | narrow     본문 한글 글꼴
      colors = dark | light      본문 색 (light: 글자색과 바탕색을 맞바꾼 상태)
-     hankey = shiftspace | ralt 한/영 전환 글쇠 (ralt: 오른쪽 Alt = 한/영 키) */
+     wrap   = off | on          자동 줄 바꿈
+   (예전 판의 hankey 항목은 읽을 때 무시함. 한/영 전환은 Shift-Space와 오른쪽 Alt 둘 다 됨) */
 static char exedir[160];         /* EXE가 있는 디렉터리 ('\\'로 끝남) */
 static char cfgpath[176];
 
@@ -1650,8 +1649,7 @@ static void cfg_load(void)
             if (!stricmp(v, "on")) wrap_on = 1;
             else if (!stricmp(v, "off")) wrap_on = 0;
         } else if (!stricmp(k, "hankey")) {
-            if (!stricmp(v, "shiftspace")) hankey = HK_SHIFTSPACE;
-            else if (!stricmp(v, "ralt")) hankey = HK_RALT;
+            /* 예전 판의 설정: 이제 두 글쇠 모두 쓰므로 무시 */
         }
     }
     fclose(f);
@@ -1665,11 +1663,9 @@ static void cfg_save(void)
     fputs("; HANEDIT settings (saved automatically)\n", f);
     fputs("; font   = wide | narrow\n", f);
     fputs("; colors = dark | light\n", f);
-    fputs("; hankey = shiftspace | ralt\n", f);
     fputs("; wrap   = off | on\n", f);
     fprintf(f, "font=%s\n", text_wide ? "wide" : "narrow");
     fprintf(f, "colors=%s\n", textinv ? "light" : "dark");
-    fprintf(f, "hankey=%s\n", hankey == HK_RALT ? "ralt" : "shiftspace");
     fprintf(f, "wrap=%s\n", wrap_on ? "on" : "off");
     err = ferror(f);
     if (fclose(f) != 0 || err) sprintf(msg, "설정 파일 %s 을(를) 저장하지 못했습니다.", cfgpath);
@@ -2017,13 +2013,6 @@ static void exec_cmd(int c)
         sel_y = 0; sel_x = 0;
         cy = nlines - 1; cx = lines[cy].len; goal = -1;
         break;
-    case CMD_HK_SHIFTSPACE:
-    case CMD_HK_RALT:
-        hankey = (c == CMD_HK_RALT) ? HK_RALT : HK_SHIFTSPACE;
-        kbd_set_hankey(hankey);
-        sprintf(msg, "이제 %s 로 한글/영문을 바꿉니다.", hankey_name());
-        cfg_save();
-        break;
     case CMD_HELP:    show_help(); break;
     case CMD_ABOUT:   show_about(); break;
     case CMD_CUT:     ed_cut(); break;
@@ -2081,9 +2070,6 @@ static const MItem m_find[] = {
 static const MItem m_input[] = {
     { "두벌식 자판",        "",       CMD_KBD2 },
     { "세벌식 최종 자판",   "",       CMD_KBD3 },
-    { 0, 0, 0 },
-    { "한/영 글쇠: Shift-Space",            "", CMD_HK_SHIFTSPACE },
-    { "한/영 글쇠: 오른쪽 Alt (한/영 키)",  "", CMD_HK_RALT },
 };
 static const MItem m_font[] = {
     { "본문: 넓은 한글 (영문의 두 배 폭)",  "", CMD_FONT_WIDE },
@@ -2096,7 +2082,7 @@ static const MItem m_help[] = {
     { "이 프로그램은...",   "",       CMD_ABOUT },
 };
 static const MItem *menus[NMENU] = { m_file, m_edit, m_find, m_input, m_font, m_help };
-static const int menu_n[NMENU] = { 8, 13, 3, 5, 4, 2 };
+static const int menu_n[NMENU] = { 8, 13, 3, 2, 4, 2 };
 
 static int mcur, msel;
 
@@ -2131,9 +2117,7 @@ static void menu_overlay(void)
             (m[i].cmd == CMD_INSMODE && !insmode) ||
             (m[i].cmd == CMD_FONT_NARROW && !text_wide) ||
             (m[i].cmd == CMD_FONT_WIDE && text_wide) ||
-            (m[i].cmd == CMD_WRAP && wrap_on) ||
-            (m[i].cmd == CMD_HK_SHIFTSPACE && hankey == HK_SHIFTSPACE) ||
-            (m[i].cmd == CMD_HK_RALT && hankey == HK_RALT))
+            (m[i].cmd == CMD_WRAP && wrap_on))
             scr_put(x + 1, yy, 0x221A, fg, bg);   /* √ */
     }
 }
@@ -2336,7 +2320,6 @@ int main(int argc, char **argv)
     vga_init();
     vga_textcolors(textinv);
     kbd_init();
-    kbd_set_hankey(hankey);
 
     while (running) {
         int k;

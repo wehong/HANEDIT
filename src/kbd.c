@@ -9,8 +9,8 @@
  * K_HANTOGGLE, so the result does not depend on whether Shift is still
  * held when the key is read from the buffer.
  *
- * The toggle key can be switched to the RIGHT Alt key (the Han/Eng key of
- * Korean keyboards sends E0 38, or F2 on some models). The BIOS does not
+ * The RIGHT Alt key also toggles Han/Eng (the Han/Eng key of Korean
+ * keyboards sends E0 38, or F2 on some models); both keys always work. The BIOS does not
  * tell left and right Alt apart, so the ISR watches E0 38 / E0 B8 and makes
  * a toggle when right Alt is pressed and released with no other key in
  * between (so right-Alt combinations still work).
@@ -19,8 +19,8 @@
  * released alone, or scan code F1 sent by the Hanja key of some Korean
  * keyboards, gives K_HANJA. Right-Ctrl combinations still work normally.
  *
- * Alt pressed and released alone (left Alt, or right Alt when it is not the
- * Han/Eng key) gives K_MENU, which opens the menu as in Hangul word processors.
+ * Left Alt pressed and released alone gives K_MENU, which opens the menu as
+ * in Hangul word processors.
  *
  * Shift + cursor keys (block selection): the BIOS reports Shift-Left etc.
  * exactly like Left (and the keypad turns Shift-arrows into digits), so the
@@ -37,7 +37,6 @@
 static void (__interrupt __far *old_int9)(void);
 static volatile int shsp = 0;           /* pending Shift-Space presses */
 static volatile int e0 = 0, lsh = 0, rsh = 0;
-static volatile int hankey = HK_SHIFTSPACE;
 static volatile int kb_toggle = 0;      /* pending right-Alt / Han-Eng key toggles */
 static volatile int ralt = 0, other = 0;
 static volatile int kb_hanja = 0;       /* pending Hanja key presses */
@@ -66,7 +65,7 @@ static void __interrupt __far kbd_isr(void)
     if (c == 0xE0) {
         e0 = 1;
     } else if (c == 0xF2) {             /* 한/영 키 (일부 한국어 자판, 떼는 코드 없음) */
-        if (hankey == HK_RALT && kb_toggle < 16) kb_toggle++;
+        if (kb_toggle < 16) kb_toggle++;
         e0 = 0;
     } else if (c == 0xF1) {             /* 한자 키 (일부 한국어 자판) */
         if (kb_hanja < 16) kb_hanja++;
@@ -78,17 +77,14 @@ static void __interrupt __far kbd_isr(void)
         if (!e0) {                      /* E0 2A / E0 36 are fake shifts */
             if (sc == 0x2A) lsh = !brk;
             else if (sc == 0x36) rsh = !brk;
-            else if (sc == 0x39 && !brk && (lsh || rsh) && hankey == HK_SHIFTSPACE && shsp < 16) shsp++;
+            else if (sc == 0x39 && !brk && (lsh || rsh) && shsp < 16) shsp++;
         }
         if (e0 && sc == 0x38) {         /* 오른쪽 Alt */
             if (!brk) {
                 if (!ralt) { ralt = 1; other = 0; }
                 octl = 1; oalt = 1;
             } else {
-                if (ralt && !other) {
-                    if (hankey == HK_RALT) { if (kb_toggle < 16) kb_toggle++; }
-                    else if (kb_menu < 4) kb_menu++;    /* 한/영 키가 아니면 메뉴 */
-                }
+                if (ralt && !other && kb_toggle < 16) kb_toggle++;   /* 혼자 눌렀다 떼면 한/영 전환 */
                 ralt = 0;
             }
         } else if (!e0 && sc == 0x38) { /* 왼쪽 Alt: 혼자 눌렀다 떼면 메뉴 */
@@ -137,13 +133,6 @@ void kbd_done(void)
     installed = 0;
 }
 
-void kbd_set_hankey(int mode)
-{
-    _disable();
-    hankey = mode;
-    shsp = 0; kb_toggle = 0;
-    _enable();
-}
 
 int kbd_hit(void)
 {

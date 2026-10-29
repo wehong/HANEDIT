@@ -1,8 +1,4 @@
-<<<<<<< HEAD
-# HANEDIT
-DOS용 VGA 한글 텍스트 편집기
-=======
-# HANEDIT 1.0 — MS-DOS용 VGA 한글 텍스트 편집기
+# HANEDIT 1.0.1 — MS-DOS용 VGA 한글 텍스트 편집기
 
 아래아 한글 1.5 시절의 화면 구성(제목 줄, 메뉴 줄, 눈금자, 편집 화면, 상태 줄)을
 흉내 낸 DOS용 한글 편집기입니다. 상태 줄 맨 오른쪽에 한글(녹색)/영문(파랑) 입력 상태가
@@ -14,7 +10,7 @@ DOS용 VGA 한글 텍스트 편집기
   쓰지 않는 5·6번 색을 VGA DAC에서 다시 정의해 씀 (`src/vga.c`의 `vga_textcolors`).
   Alt-B를 누르면 밝은 바탕(#CCCCCC)에 어두운 글자로 맞바뀜 (설정 파일에 저장됨)
 - 한글 입력: **libhangul** 오토마타 (두벌식 / 세벌식 최종) — `libhangul/`
-- 한/영 전환: **Shift-Space** (처음 상태) 또는 **오른쪽 Alt** (한국어 자판의 한/영 키) — 입력 메뉴에서 고름
+- 한/영 전환: **Shift-Space**와 **오른쪽 Alt** (한국어 자판의 한/영 키) 둘 다 됨
 - 한자 바꾸기: **F9** 또는 **한자 키** (오른쪽 Ctrl) — 낱말 단위(대한민국 → 大韓民國) 또는 한 글자씩, 음과 뜻을 보며 고름 (`HANJA.DIC`)
 - 파일: **UTF-8 텍스트**로 읽고 저장 (BOM은 읽을 때 무시, 저장 시 BOM 없음,
   불러온 파일의 줄바꿈 방식 CR/LF 또는 LF 유지, 새 문서는 CR/LF.
@@ -57,7 +53,7 @@ DOS4GW.EXE 같은 별도 익스텐더나 한글 글꼴·한글 바이오스(HBIO
 
 | 글쇠 | 하는 일 |
 |---|---|
-| F10, Alt (혼자 눌렀다 뗌), Esc | 메뉴 |
+| F10, 왼쪽 Alt (혼자 눌렀다 뗌), Esc | 메뉴 |
 | Alt+F / E / Q / D / J / H | 파일 / 편집 / 찾기 / 입력 / 글꼴 / 도움말 메뉴를 바로 엶 |
 | F1 | 도움말 |
 | Alt-N | 새 문서 |
@@ -65,7 +61,7 @@ DOS4GW.EXE 같은 별도 익스텐더나 한글 글꼴·한글 바이오스(HBIO
 | Alt-S, Ctrl-S | 저장하기 |
 | Alt-V | 다른 이름으로 저장 |
 | Alt-X | 끝내기 (고친 내용이 있으면 저장할지 물음) |
-| Shift-Space 또는 오른쪽 Alt | 한글/영문 전환 (입력 메뉴에서 어느 글쇠를 쓸지 고름) |
+| Shift-Space, 오른쪽 Alt (한/영 키) | 한글/영문 전환 (둘 다 됨) |
 | F9 또는 한자 키 (오른쪽 Ctrl) | 한자 바꾸기: 낱말 또는 한 글자 (아래 설명) |
 | 화살표, Home, End, PgUp, PgDn | 커서 이동 |
 | Ctrl-Home / Ctrl-End | 문서 처음 / 끝 |
@@ -91,11 +87,12 @@ DOS4GW.EXE 같은 별도 익스텐더나 한글 글꼴·한글 바이오스(HBIO
 찾기(Q)·입력(D)·글꼴(J)로 정했습니다. 입력(D)은 한컴오피스 한글의 '입력(D)'과 같습니다.
 메뉴가 열린 상태에서는 Alt 없이 글자만 눌러도 그 메뉴로 옮겨 갑니다.
 
-입력 메뉴에서 두벌식 / 세벌식 최종 자판과 한/영 전환 글쇠를 고를 수 있습니다.
+입력 메뉴에서 두벌식 / 세벌식 최종 자판을 고를 수 있습니다. 한글/영문 전환은 아래 두 글쇠
+모두 언제든 쓸 수 있습니다.
 
-- **Shift-Space**: 왼쪽·오른쪽 Shift 모두 가능. 이때 오른쪽 Alt는 보통 Alt로 동작
+- **Shift-Space**: 왼쪽·오른쪽 Shift 모두 가능
 - **오른쪽 Alt (한/영 키)**: 눌렀다 뗄 때 전환 (다른 글쇠와 함께 누르면 전환 안 함).
-  한/영 키가 F2 코드를 보내는 한국어 자판도 인식. 이때 Shift-Space는 보통 띄어쓰기
+  한/영 키가 F2 코드를 보내는 한국어 자판도 인식. 메뉴는 왼쪽 Alt를 혼자 눌렀다 떼면 열림
 
 ## 한자 바꾸기
 
@@ -143,17 +140,18 @@ python3 tools/genhanja.py libhangul/data/hanja/hanja.txt libhangul/data/hanja/fr
 
 ## 설정 파일 (HANEDIT.CFG)
 
-본문 글꼴, 배경색, 한/영 전환 글쇠, 자동 줄 바꿈은 `HANEDIT.EXE`와 같은 디렉터리의 `HANEDIT.CFG`에
+본문 글꼴, 배경색, 자동 줄 바꿈은 `HANEDIT.EXE`와 같은 디렉터리의 `HANEDIT.CFG`에
 저장됩니다. 메뉴나 Alt-B로 바꾸는 즉시 저장되고, 다음에 켤 때 그대로 불러옵니다. 파일이
-없으면 넓은 한글·어두운 바탕·Shift-Space로 시작합니다. 손으로 고쳐도 됩니다
+없으면 넓은 한글·어두운 바탕으로 시작합니다. 손으로 고쳐도 됩니다
 (대소문자·앞뒤 공백 무시, `;` 뒤는 주석):
 
 ```
 font=wide        ; wide (넓은 한글) | narrow (좁은 한글)
 colors=dark      ; dark (어두운 바탕) | light (밝은 바탕)
-hankey=shiftspace ; shiftspace (Shift-Space) | ralt (오른쪽 Alt = 한/영 키)
 wrap=off         ; off | on (자동 줄 바꿈)
 ```
+
+예전 판이 저장한 `hankey=` 줄은 무시하고, 다음에 설정을 저장할 때 빠집니다.
 
 EXE가 쓰기 금지된 곳(예: 읽기 전용 디스크)에 있으면 설정을 저장하지 못했다는 알림이
 나오고, 설정은 그 실행 동안만 유지됩니다.
@@ -207,6 +205,15 @@ python3 tools/genfont.py unifont.hex Galmuri14.bdf GalmuriMono11.bdf Galmuri11-C
 - BMP 밖 문자(이모지 등)와 잘못된 UTF-8 바이트는 U+FFFD로 바뀝니다
 - 한자 → 한글 되바꾸기는 없습니다 (Ctrl-Z로 되돌리기는 됨)
 
+## 바뀐 내용
+
+- **1.0.1** — 한/영 전환을 Shift-Space와 오른쪽 Alt(한/영 키) 둘 다 쓰도록 바꿈 (입력 메뉴와
+  설정 파일의 한/영 글쇠 고르기는 없앰, 메뉴는 왼쪽 Alt). 화면 그리기를 빠르게 함. 시작할 때 첫 화면이 왼쪽 위에서 오른쪽 아래로
+  그려지는 모습이 보이던 것을 줄임 (DOSBox 기본 속도에서 약 0.7초 → 약 0.1초).
+  바탕은 VGA 세트/리셋으로 네 평면을 한꺼번에 칠하고(같은 바탕색이 이어진 칸은 한 번에),
+  글자는 글자색과 바탕색이 다른 평면의 점이 있는 줄만 씀. 화면 모양은 1.0과 같음
+- **1.0** — 첫 판
+
 ## 라이선스
 
 - HANEDIT 소스(`src/main.c`, `vga.c`, `kbd.c`, `tools/`): 자유롭게 사용
@@ -215,4 +222,3 @@ python3 tools/genfont.py unifont.hex Galmuri14.bdf GalmuriMono11.bdf Galmuri11-C
 - 갈무리 글꼴 (Galmuri14, GalmuriMono11, Galmuri11-Condensed, © Lee Minseo): SIL OFL 1.1 (`fonts/OFL-Galmuri.txt`)
 - GNU Unifont 글꼴: GPLv2+ (글꼴 포함 예외) / SIL OFL 1.1
 - DOS/32A 익스텐더: DOS/32 Advanced License (Open Watcom 배포본에 포함)
->>>>>>> 88d7c01 (first commit)

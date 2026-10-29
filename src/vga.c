@@ -77,6 +77,11 @@ int uwidth(unsigned short ch)
     return uwidth_m(ch, font_hangul_wide);
 }
 
+static void pal_hide(void);
+static void pal_show(void);
+static int  pal_hidden;              /* 1: 첫 화면을 그리는 중이라 감춰 둠 */
+static unsigned char dacidx[16];
+
 void vga_init(void)
 {
     union REGS r;
@@ -86,21 +91,25 @@ void vga_init(void)
     outpw(0x3CE, 0x0001);   /* disable set/reset */
     outpw(0x3CE, 0x0003);   /* replace, no rotate */
     outpw(0x3CE, 0xFF08);   /* bit mask all */
+    {   /* 16색 번호 → DAC 번호 (속성 팔레트). 화면을 감춘 동안 BIOS를 부르지 않으려고 미리 읽어 둠 */
+        int i;
+        for (i = 0; i < 16; i++) {
+            r.w.ax = 0x1007;
+            r.h.bl = (unsigned char)i;
+            int386(0x10, &r, &r);
+            dacidx[i] = r.h.bh;
+        }
+    }
     vga_textcolors(0);
     memset(front, 0xFF, sizeof(front));
     memset(back, 0, sizeof(back));
+    pal_hide();                 /* 첫 화면은 다 그린 뒤에 한 번에 보임 */
 }
 
 /* 16색 번호의 실제 색을 바꿈: 속성 팔레트가 가리키는 DAC 레지스터에 RGB를 씀 */
 void vga_setrgb(int color, int r, int g, int b)
 {
-    union REGS rg;
-    int dac;
-    rg.w.ax = 0x1007;                /* 속성 팔레트 레지스터 읽기 */
-    rg.h.bl = (unsigned char)color;
-    int386(0x10, &rg, &rg);
-    dac = rg.h.bh;
-    outp(0x3C8, dac);
+    outp(0x3C8, dacidx[color & 15]);
     outp(0x3C9, r >> 2);             /* VGA DAC은 6비트 */
     outp(0x3C9, g >> 2);
     outp(0x3C9, b >> 2);
@@ -121,6 +130,7 @@ void vga_done(void)
 {
     union REGS r;
     outpw(0x3C4, 0x0F02);
+    if (pal_hidden) pal_show();
     r.w.ax = 0x0003;
     int386(0x10, &r, &r);
 }
@@ -245,42 +255,99 @@ void scr_box(int x, int y, int w, int h, int fg, int bg, int dbl)
     scr_put(x + w - 1, y + h - 1, dbl ? 0x255D : 0x2518, fg, bg);
 }
 
-static void draw_cell(int x, int y, const Cell *c)
+/* 칸 하나의 16줄 그림 (글자 + 밑줄·커서). 모두 0이면(빈칸) 0 */
+static const unsigned char *cell_rows(const Cell *c, unsigned char *tmp)
 {
-    unsigned char rows[16];
     const unsigned char *g;
-    int wide = 0, r, plane, fg = c->fg, bg = c->bg;
-    volatile unsigned char *p;
-
+    int wide = 0, r, step = 1;
+    if (c->ch == ' ' && c->part == 0 && !c->attr) return 0;     /* 빈칸 (가장 흔함) */
     g = font_glyph_m(c->ch, c->hw, &wide);
     if (!g) { g = (c->part == 0) ? box8 : blank16; wide = (c->part != 0); }
-    for (r = 0; r < 16; r++) {
-        if (c->part == 0) rows[r] = wide ? g[r * 2] : g[r];
-        else if (wide)    rows[r] = g[r * 2 + (c->part - 1)];
-        else              rows[r] = (c->part == 1) ? g[r] : 0;
-    }
-    if (c->attr & A_UNDER)  rows[15] = 0xFF;
-    if (c->attr & A_CURBAR) { rows[13] ^= 0xFF; rows[14] ^= 0xFF; rows[15] ^= 0xFF; }
-    if (c->attr & A_CURBLK) for (r = 0; r < 16; r++) rows[r] ^= 0xFF;
-
-    p = VMEM + (unsigned)y * 16 * 80 + x;
-    for (plane = 0; plane < 4; plane++) {
-        unsigned char fm = (unsigned char)((fg >> plane) & 1 ? 0xFF : 0);
-        unsigned char bm = (unsigned char)((bg >> plane) & 1 ? 0xFF : 0);
-        outpw(0x3C4, (unsigned short)(((1 << plane) << 8) | 0x02));
-        for (r = 0; r < 16; r++)
-            p[r * 80] = (unsigned char)((rows[r] & fm) | (~rows[r] & bm));
-    }
+    if (wide) { step = 2; if (c->part == 2) g++; }               /* 넓은 글자: 왼쪽/오른쪽 반 */
+    else if (c->part == 2) g = blank16;
+    if (step == 1 && !c->attr) return g;                        /* 그대로 씀 (복사 안 함) */
+    for (r = 0; r < 16; r++, g += step) tmp[r] = *g;
+    if (c->attr & A_UNDER)  tmp[15] = 0xFF;
+    if (c->attr & A_CURBAR) { tmp[13] ^= 0xFF; tmp[14] ^= 0xFF; tmp[15] ^= 0xFF; }
+    if (c->attr & A_CURBLK) for (r = 0; r < 16; r++) tmp[r] ^= 0xFF;
+    return tmp;
 }
+
+/* 첫 화면은 VGA 출력을 꺼 둔 채 그리고, 다 그린 뒤 한 번에 보임 */
+static void pal_hide(void) { inp(0x3DA); outp(0x3C0, 0x00); pal_hidden = 1; }  /* 속성 제어기 PAS=0: 화면 끔 */
+static void pal_show(void) { inp(0x3DA); outp(0x3C0, 0x20); pal_hidden = 0; }  /* PAS=1: 화면 켬 */
+
+/* 바뀐 칸만 그림. 빠르게 그리려고
+   1) 바탕: 세트/리셋으로 네 평면을 한꺼번에, 같은 바탕색이 이어진 칸은 줄마다 memset 한 번
+   2) 글자가 있는 칸만 평면마다 그림 (빈칸은 1로 끝) */
+static unsigned char dirty[SCR_H][SCR_W], rowdirty[SCR_H];
 
 void scr_flush(void)
 {
-    int x, y;
-    for (y = 0; y < SCR_H; y++)
-        for (x = 0; x < SCR_W; x++)
-            if (memcmp(&back[y][x], &front[y][x], sizeof(Cell)) != 0) {
-                draw_cell(x, y, &back[y][x]);
-                front[y][x] = back[y][x];
+    int x, y, x0, r;
+    unsigned char rows[16];
+
+    /* 0) 바뀐 칸 표시 */
+    for (y = 0; y < SCR_H; y++) {
+        int any = 0;
+        for (x = 0; x < SCR_W; x++) {
+            const Cell *b = &back[y][x], *f = &front[y][x];
+            int d = b->ch != f->ch || b->fg != f->fg || b->bg != f->bg || b->attr != f->attr ||
+                    b->part != f->part || b->hw != f->hw;
+            dirty[y][x] = (unsigned char)d;
+            any |= d;
+        }
+        rowdirty[y] = (unsigned char)any;
+    }
+
+    outpw(0x3C4, 0x0F02);               /* 네 평면 모두 */
+    outpw(0x3CE, 0x0F01);               /* 세트/리셋 켬 */
+    outpw(0x3CE, 0xFF08);               /* 비트 마스크 모두 */
+    for (y = 0; y < SCR_H; y++) {
+        volatile unsigned char *row0 = VMEM + (unsigned)y * 16 * 80;
+        const unsigned char *dr = dirty[y];
+        if (!rowdirty[y]) continue;
+        /* 1) 바탕 */
+        outpw(0x3CE, 0xFF08);
+        for (x = 0; x < SCR_W; ) {
+            int bg;
+            if (!dr[x]) { x++; continue; }
+            bg = back[y][x].bg;
+            x0 = x;
+            while (x < SCR_W && dr[x] && back[y][x].bg == bg) x++;
+            outpw(0x3CE, (unsigned short)((bg << 8) | 0x00));
+            for (r = 0; r < 16; r++)
+                memset((void *)(row0 + r * 80 + x0), 0xFF, x - x0);
+        }
+        /* 2) 글자: 평면마다 (글자 점은 글자색, 나머지는 바탕색) */
+        outpw(0x3CE, 0x0001);           /* 세트/리셋 끔 */
+        for (x = 0; x < SCR_W; x++) {
+            Cell *c = &back[y][x];
+            volatile unsigned char *p = row0 + x, *q;
+            const unsigned char *rw;
+            unsigned char v, xm;
+            int plane;
+            if (!dr[x]) continue;
+            front[y][x] = *c;
+            if ((rw = cell_rows(c, rows)) == 0) continue;   /* 빈칸: 바탕만으로 끝 */
+            /* 바탕은 이미 칠했으므로 글자색과 바탕색이 다른 평면만, 빈 줄은 건너뜀 */
+            for (plane = 0; plane < 4; plane++) {
+                int fb = (c->fg >> plane) & 1, bb = (c->bg >> plane) & 1;
+                if (fb == bb) continue;
+                outpw(0x3C4, (unsigned short)(((1 << plane) << 8) | 0x02));
+                /* 글자색 1·바탕색 0 평면은 글자 모양 그대로, 반대면 뒤집어서.
+                   (VGA 메모리에 쓴 뒤 그 자리에서 뒤집으면 읽기가 끼어 틀리므로 값을 먼저 만듦) */
+                xm = fb ? 0 : 0xFF;
+                q = p;
+                for (r = 0; r < 16; r++, q += 80)
+                    if (rw[r]) { v = (unsigned char)(rw[r] ^ xm); *q = v; }
             }
-    outpw(0x3C4, 0x0F02);
+        }
+        outpw(0x3C4, 0x0F02);
+        outpw(0x3CE, 0x0F01);           /* 다음 줄 바탕을 위해 세트/리셋 켬 */
+    }
+    outpw(0x3CE, 0x0001);               /* 원래대로: 세트/리셋 끔 */
+    outpw(0x3CE, 0x0000);
+    outpw(0x3CE, 0xFF08);
+    if (pal_hidden) pal_show();
 }

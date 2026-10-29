@@ -29,18 +29,14 @@
 #define K_BKSP      8
 #define K_TAB       9
 #define K_ESC       27
-#define K_HANTOGGLE 0x1000                 /* Shift-Space */
+#define K_HANTOGGLE 0x1000                 /* Shift-Space, 오른쪽 Alt, 한/영 키 */
 #define K_SHIFT     0x2000                 /* flag: cursor key pressed with Shift */
 #define K_HANJA     0x1001                 /* 한자 키: 오른쪽 Ctrl만 눌렀다 뗌, 또는 F1 코드 */
 #define K_MENU      0x1002                 /* Alt만 눌렀다 뗌: 메뉴 열기 */
 #define K_CINS      K_EXT(0x92)            /* Ctrl-Insert */
 
-/* 한/영 전환 글쇠 */
-#define HK_SHIFTSPACE 0                    /* Shift-Space */
-#define HK_RALT       1                    /* 오른쪽 Alt (한국어 자판의 한/영 키) */
 
 void kbd_init(void);
-void kbd_set_hankey(int mode);
 void kbd_done(void);
 int  kbd_hit(void);           /* key waiting in BIOS buffer or han/eng toggle pending */
 int  kbd_get(void);           /* blocking, no blink handling */
