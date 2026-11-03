@@ -30,7 +30,11 @@ void scr_put(int x, int y, unsigned short ch, int fg, int bg);
 int  scr_puts(int x, int y, const char *utf8, int fg, int bg);   /* returns cells used */
 int  scr_putw(int x, int y, const unsigned short *s, int n, int fg, int bg);
 void scr_fill(int x, int y, int w, int h, unsigned short ch, int fg, int bg);
-void scr_attr(int x, int y, int attr);          /* OR attribute into cell */
+void scr_attr(int x, int y, int attr);
+/* 줄 기억: key(그 줄 모양을 정하는 값, 16바이트까지)가 지난번과 같으면 만든 줄을 그대로 씀 */
+int  scr_row_restore(int slot, int y, const void *key, int n);  /* 기억해 둔 줄이 있으면 1 */
+void scr_row_save(int slot, int y, const void *key, int n);
+void scr_row_forget(void);          /* OR attribute into cell */
 void scr_shadow(int x, int y, int w, int h);    /* darken cells (dialog shadow) */
 void scr_box(int x, int y, int w, int h, int fg, int bg, int dbl);
 void scr_flush(void);                           /* draw changed cells */

@@ -1,5 +1,6 @@
 /* VGA mode 12h (640x480, 16 colours, planar) cell renderer for HANEDIT. */
 #include <string.h>
+#include <stdlib.h>
 #include <conio.h>
 #include <i86.h>
 #include "vga.h"
@@ -14,6 +15,7 @@ typedef struct {
 
 static Cell back[SCR_H][SCR_W];
 static Cell front[SCR_H][SCR_W];
+static Cell fill_row[SCR_W];       /* scr_fill 이 쓰는 같은 칸 한 줄 */
 
 #define VMEM ((volatile unsigned char *)0xA0000)
 
@@ -61,6 +63,7 @@ const unsigned char *font_glyph(unsigned short ch, int *wide)
 int uwidth_m(unsigned short ch, int hangul_wide)
 {
     int wide;
+    if (ch >= 0xAC00 && ch <= 0xD7A3) return hangul_wide ? 2 : 1;   /* 한글 음절: 두 글꼴 모두 있음 */
     if (ch < 0x80) return 1;
     if (font_glyph_m(ch, hangul_wide, &wide)) return wide ? 2 : 1;
     /* not in font: guess from Unicode East Asian Wide ranges */
@@ -74,6 +77,8 @@ int uwidth_m(unsigned short ch, int hangul_wide)
 
 int uwidth(unsigned short ch)
 {
+    if (ch < 0x80) return 1;                                    /* 빠른 길: 영문 */
+    if (ch >= 0xAC00 && ch <= 0xD7A3) return font_hangul_wide ? 2 : 1;   /* 한글 음절 */
     return uwidth_m(ch, font_hangul_wide);
 }
 
@@ -164,6 +169,15 @@ static void setcell(int x, int y, unsigned short ch, int part, int fg, int bg)
 
 void scr_put(int x, int y, unsigned short ch, int fg, int bg)
 {
+    if (ch < 0x80) {                    /* 빠른 길: 영문 한 칸 */
+        Cell *c;
+        if ((unsigned)x >= SCR_W || (unsigned)y >= SCR_H) return;
+        c = &back[y][x];
+        if (c->part) unhook(x, y);
+        c->ch = ch; c->part = 0; c->fg = (unsigned char)fg; c->bg = (unsigned char)bg;
+        c->attr = 0; c->hw = (unsigned char)font_hangul_wide;
+        return;
+    }
     if (uwidth(ch) == 2) {
         if (x + 1 >= SCR_W) { setcell(x, y, ' ', 0, fg, bg); return; }
         setcell(x, y, ch, 1, fg, bg);
@@ -220,9 +234,50 @@ int scr_putw(int x, int y, const unsigned short *s, int n, int fg, int bg)
 void scr_fill(int x, int y, int w, int h, unsigned short ch, int fg, int bg)
 {
     int i, j;
-    for (j = y; j < y + h; j++)
-        for (i = x; i < x + w; i++)
-            setcell(i, j, ch, 0, fg, bg);
+    Cell t;
+    if (x < 0) { w += x; x = 0; }
+    if (y < 0) { h += y; y = 0; }
+    if (x + w > SCR_W) w = SCR_W - x;
+    if (y + h > SCR_H) h = SCR_H - y;
+    if (w <= 0 || h <= 0) return;
+    memset(&t, 0, sizeof(t));
+    t.ch = ch; t.fg = (unsigned char)fg; t.bg = (unsigned char)bg;
+    t.hw = (unsigned char)font_hangul_wide;
+    if (memcmp(&t, &fill_row[0], sizeof(t)) != 0)   /* 채울 칸 한 줄을 만들어 두고 */
+        for (i = 0; i < SCR_W; i++) fill_row[i] = t;
+    for (j = y; j < y + h; j++) {
+        unhook(x, j);                   /* 가장자리에 걸친 넓은 글자의 다른 반쪽 */
+        unhook(x + w - 1, j);
+        memcpy(&back[j][x], fill_row, w * sizeof(Cell));   /* 줄마다 한 번에 복사 */
+    }
+}
+
+/* 줄 기억: 메뉴 줄·제목 줄·눈금자처럼 잘 안 바뀌는 줄은 key(그 줄을 정하는 값)가 같으면
+   지난번에 만든 줄을 그대로 가져다 씀 */
+#define NROWC  SCR_H                 /* 기억 칸 수 (메뉴·제목·눈금자 + 본문 줄) */
+#define ROWKEY 16                   /* key 최대 바이트 */
+static Cell (*rowc)[SCR_W];        /* 처음 쓸 때 잡음 (EXE를 키우지 않으려고) */
+static unsigned char rowc_key[NROWC][ROWKEY];
+static unsigned char rowc_ok[NROWC];
+
+int scr_row_restore(int slot, int y, const void *key, int n)
+{
+    if (!rowc || !rowc_ok[slot] || memcmp(rowc_key[slot], key, n) != 0) return 0;
+    memcpy(back[y], rowc[slot], sizeof(rowc[slot]));
+    return 1;
+}
+
+void scr_row_save(int slot, int y, const void *key, int n)
+{
+    if (!rowc && (rowc = malloc(NROWC * sizeof(*rowc))) == 0) return;   /* 메모리가 없으면 기억 안 함 */
+    memcpy(rowc[slot], back[y], sizeof(rowc[slot]));
+    memcpy(rowc_key[slot], key, n);
+    rowc_ok[slot] = 1;
+}
+
+void scr_row_forget(void)
+{
+    memset(rowc_ok, 0, sizeof(rowc_ok));
 }
 
 void scr_attr(int x, int y, int attr)
@@ -290,6 +345,7 @@ void scr_flush(void)
     /* 0) 바뀐 칸 표시 */
     for (y = 0; y < SCR_H; y++) {
         int any = 0;
+        if (memcmp(back[y], front[y], sizeof(back[y])) == 0) { rowdirty[y] = 0; continue; }
         for (x = 0; x < SCR_W; x++) {
             const Cell *b = &back[y][x], *f = &front[y][x];
             int d = b->ch != f->ch || b->fg != f->fg || b->bg != f->bg || b->attr != f->attr ||

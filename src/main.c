@@ -18,7 +18,7 @@
 #include "kbd.h"
 #include "hangul.h"
 
-#define VERSION   "1.0.1"
+#define VERSION   "1.0.2"
 
 #define MENU_Y    1             /* 메뉴 줄: 제목 줄 아래 */
 #define TITLE_Y   0             /* 제목 줄: 맨 위 */
@@ -32,6 +32,12 @@
 
 typedef unsigned short wch;
 typedef struct { wch *s; int len, cap; } Line;
+
+/* 줄마다 고친 횟수 번호 (화면 줄 기억용). 줄 내용이 바뀔 때마다 새 번호를 받음.
+   0은 새로 만든 빈 줄. 16비트판에서 줄 목록을 64KB 안에 두려고 따로 둠 */
+static unsigned short *lver;
+static int   lvercap;
+static unsigned short gver;
 
 /* ---------------------------------------------------------------- 문서 */
 static Line *lines;
@@ -112,8 +118,11 @@ static void line_reserve(Line *l, int n)
     }
 }
 
+static void line_touch(const Line *l);
+
 static void line_ins(Line *l, int pos, const wch *src, int n)
 {
+    line_touch(l);
     line_reserve(l, l->len + n);
     memmove(l->s + pos + n, l->s + pos, (l->len - pos) * sizeof(wch));
     memcpy(l->s + pos, src, n * sizeof(wch));
@@ -124,6 +133,7 @@ static void line_del(Line *l, int pos, int n)
 {
     if (pos + n > l->len) n = l->len - pos;
     if (n <= 0) return;
+    line_touch(l);
     memmove(l->s + pos, l->s + pos + n, (l->len - pos - n) * sizeof(wch));
     l->len -= n;
 }
@@ -135,15 +145,34 @@ static void lines_insert(int idx)
         lines = (Line *)realloc(lines, caplines * sizeof(Line));
         if (!lines) fatal("out of memory");
     }
+    if (lvercap < caplines) {
+        unsigned short *t = (unsigned short *)realloc(lver, caplines * sizeof(unsigned short));
+        if (!t) fatal("out of memory");
+        lver = t; lvercap = caplines;
+    }
     memmove(&lines[idx + 1], &lines[idx], (nlines - idx) * sizeof(Line));
+    memmove(&lver[idx + 1], &lver[idx], (nlines - idx) * sizeof(unsigned short));
     memset(&lines[idx], 0, sizeof(Line));
+    lver[idx] = 0;
     nlines++;
+}
+
+static void line_touch(const Line *l)
+{
+    if (++gver == 0) {                  /* 번호가 한 바퀴 돌면 모두 다시 매기고 화면 기억을 버림 */
+        int i;
+        for (i = 0; i < nlines; i++) lver[i] = (unsigned short)(i + 1);
+        gver = (unsigned short)((long)nlines < 60000L ? nlines + 1 : 60001L);
+        scr_row_forget();
+    }
+    lver[l - lines] = gver;
 }
 
 static void lines_remove(int idx)
 {
     free(lines[idx].s);
     memmove(&lines[idx], &lines[idx + 1], (nlines - idx - 1) * sizeof(Line));
+    memmove(&lver[idx], &lver[idx + 1], (nlines - idx - 1) * sizeof(unsigned short));
     nlines--;
 }
 
@@ -397,6 +426,7 @@ static void raw_delete(int y1, int x1, int y2, int x2)
     } else {
         Line *a = &lines[y1], *b = &lines[y2];
         a->len = x1;
+        line_touch(a);
         line_ins(a, x1, b->s + x2, b->len - x2);
         for (y = y2; y > y1; y--) lines_remove(y);
     }
@@ -417,6 +447,7 @@ static void raw_insert(int y, int x, const wch *t, long n, int *ey, int *ex)
             l = &lines[y];
             line_ins(&lines[y + 1], 0, l->s + x, l->len - x);
             l->len = x;
+            line_touch(l);
             y++; x = 0;
         }
         i = j + 1;
@@ -874,6 +905,7 @@ static int menu_x[NMENU];
 static void draw_menubar(int active)
 {
     int i, x = 1;
+    if (scr_row_restore(0, MENU_Y, &active, sizeof(active))) return;   /* 그대로면 기억해 둔 줄 */
     scr_fill(0, MENU_Y, SCR_W, 1, ' ', C_BLACK, C_LGRAY);
     for (i = 0; i < NMENU; i++) {
         int fg = (i == active) ? C_WHITE : C_BLACK;
@@ -892,6 +924,7 @@ static void draw_menubar(int active)
         x += 2;
     }
     scr_puts(SCR_W - 1 - utf8_width("Esc/F10: 메뉴"), MENU_Y, "Esc/F10: 메뉴", C_DGRAY, C_LGRAY);
+    scr_row_save(0, MENU_Y, &active, sizeof(active));
 }
 
 static void draw_title(void)
@@ -899,21 +932,28 @@ static void draw_title(void)
     char buf[120];
     const char *name = filename[0] ? filename : "(새 문서)";
     int w;
+    unsigned long key = modified ? 1 : 2;
+    for (w = 0; name[w]; w++) key = key * 131 + (unsigned char)name[w];
+    if (scr_row_restore(1, TITLE_Y, &key, sizeof(key))) return;       /* 파일 이름·수정 표시가 그대로면 */
     scr_fill(0, TITLE_Y, SCR_W, 1, ' ', C_WHITE, C_BLUE);
     scr_puts(1, TITLE_Y, "한글편집기 HANEDIT", C_LCYAN, C_BLUE);   /* 버전은 '이 프로그램은'에만 */
     sprintf(buf, "%s%s", name, modified ? " *" : "");
     w = utf8_width(buf);
     scr_puts((SCR_W - w) / 2, TITLE_Y, buf, C_WHITE, C_BLUE);
+    scr_row_save(1, TITLE_Y, &key, sizeof(key));
 }
 
 static void draw_ruler(void)
 {
     int i, curc = dcol(&lines[cy], cx) - left;
+    unsigned long key;
     if (wrap_on) {                      /* 자동 줄 바꿈: 커서가 든 화면 줄 안의 칸 */
         int rs, re;
         wrap_row_of(lines[cy].s, lines[cy].len, cx, &rs, &re);
         curc = dcol(&lines[cy], cx) - dcol(&lines[cy], rs);
     }
+    key = ((unsigned long)(curc + 1) << 16) | (unsigned)left;
+    if (scr_row_restore(2, RULER_Y, &key, sizeof(key))) return;       /* 커서 칸·가로 위치가 그대로면 */
     for (i = 0; i < SCR_W; i++) {
         int c = left + i + 1;
         wch ch;
@@ -923,6 +963,7 @@ static void draw_ruler(void)
         if (i == curc) scr_put(i, RULER_Y, 0x25BC, C_RED, C_CYAN);   /* ▼ */
         else scr_put(i, RULER_Y, ch, C_BLACK, C_CYAN);
     }
+    scr_row_save(2, RULER_Y, &key, sizeof(key));
 }
 
 /* 한 화면 줄 그리기: s[st..en) (en == n 이면 줄 끝 칸도). xoff: 첫 글자의 화면 칸 */
@@ -962,6 +1003,32 @@ static void sel_span(int li, int n, int *ss, int *se)   /* 줄 li 에서 블록 
     }
 }
 
+/* 본문 화면 줄 기억. 커서 줄(커서·조합 중인 글자가 있음)은 늘 새로 그림 */
+typedef struct { unsigned short ver; short st, en, xoff, ss, se; unsigned char tw, pad; } RowKey;
+
+static void row_key(RowKey *k, int li, int st, int en, int xoff, int ss, int se)
+{
+    memset(k, 0, sizeof(*k));
+    k->ver = lver[li]; k->st = (short)st; k->en = (short)en; k->xoff = (short)xoff;
+    k->ss = (short)ss; k->se = (short)se; k->tw = (unsigned char)text_wide;
+}
+
+static int row_cached(int r, int li, int st, int en, int xoff, int ss, int se)
+{
+    RowKey k;
+    if (li == cy) return 0;
+    row_key(&k, li, st, en, xoff, ss, se);
+    return scr_row_restore(3 + r, EDIT_Y + r, &k, sizeof(k));
+}
+
+static void row_store(int r, int li, int st, int en, int xoff, int ss, int se)
+{
+    RowKey k;
+    if (li == cy) return;
+    row_key(&k, li, st, en, xoff, ss, se);
+    scr_row_save(3 + r, EDIT_Y + r, &k, sizeof(k));
+}
+
 static void draw_edit(void)
 {
     int r, pl = overlay ? 0 : prelen;   /* 대화 상자 입력 중이면 본문에 조합 글자 안 그림 */
@@ -972,7 +1039,9 @@ static void draw_edit(void)
             const wch *s; int n, ci, hs, he, ss, se;
             disp_line(top + r, pl, &s, &n, &ci, &hs, &he);
             if (pl) sel_span(-1, n, &ss, &se); else sel_span(top + r, n, &ss, &se);
+            if (row_cached(r, top + r, 0, n, -left, ss, se)) continue;
             draw_seg(EDIT_Y + r, s, n, 0, n, -left, ss, se, ci, hs, he);
+            row_store(r, top + r, 0, n, -left, ss, se);
         }
     } else {
         int li = top, r0 = top_row, row = 0;
@@ -983,7 +1052,10 @@ static void draw_edit(void)
             for (;;) {
                 int e = wrap_next(s, n, st);
                 if (rr >= r0) {
-                    draw_seg(EDIT_Y + row, s, n, st, e, 0, ss, se, ci, hs, he);
+                    if (!row_cached(row, li, st, e, 0, ss, se)) {
+                        draw_seg(EDIT_Y + row, s, n, st, e, 0, ss, se, ci, hs, he);
+                        row_store(row, li, st, e, 0, ss, se);
+                    }
                     if (++row >= EDIT_H) break;
                 }
                 if (e >= n) break;
